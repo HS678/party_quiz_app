@@ -1,0 +1,45 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Virtual environments and local dependency folders
+.venv/
+venv/
+env/
+ENV/
+Lib/
+site-packages/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
