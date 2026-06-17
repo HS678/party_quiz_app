@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app.py"
 PROGRESS_FILE = ROOT / "data" / "progress.json"
-EMPTY_PROGRESS = {"random": {"single": {}, "multiple": {}}, "sequential": {}, "exam": {}}
+EMPTY_PROGRESS = {"random": {"single": {}, "multiple": {}}, "sequential": {}, "exam": {}, "wrong_practice": {}}
 
 
 class SessionState(dict):
@@ -75,3 +75,24 @@ def test_reset_exam_saves_single_first_multiple_second_progress_file():
     assert len(order) == 100
     assert all(k.startswith("single:") for k in order[:70])
     assert all(k.startswith("multiple:") for k in order[70:])
+
+
+def test_reset_wrong_practice_saves_progress_file():
+    reset_progress_file()
+    app, fake_st = load_app_with_fake_streamlit()
+    init_state(app, fake_st)
+    q1 = next(q for q in fake_st.session_state.questions if q["type"] == "single" and q["id"] == 1)
+    q2 = next(q for q in fake_st.session_state.questions if q["type"] == "single" and q["id"] == 2)
+    book = {
+        "single:1": {**q1, "wrong_count": 1, "wrong_choices": ["A"], "last_wrong_at": ""},
+        "single:2": {**q2, "wrong_count": 1, "wrong_choices": ["A"], "last_wrong_at": ""},
+    }
+    fake_st.session_state.wrong_order = []
+    fake_st.session_state.wrong_current_index = 0
+    fake_st.session_state.wrong_submitted = False
+    fake_st.session_state.wrong_last_choice = []
+    app.reset_wrong_practice(book)
+    progress = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
+    assert progress["wrong_practice"]["current_index"] == 0
+    assert len(progress["wrong_practice"]["order"]) == 2
+    assert set(progress["wrong_practice"]["order"]) == {"single:1", "single:2"}

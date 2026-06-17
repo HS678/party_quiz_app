@@ -8,7 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 PROGRESS_FILE = ROOT / "data" / "progress.json"
 WRONG_FILE = ROOT / "data" / "wrong_book.json"
-EMPTY_PROGRESS = {"random": {"single": {}, "multiple": {}}, "sequential": {}, "exam": {}}
+EMPTY_PROGRESS = {"random": {"single": {}, "multiple": {}}, "sequential": {}, "exam": {}, "wrong_practice": {}}
 
 
 @pytest.fixture(autouse=True)
@@ -19,6 +19,7 @@ def _reset_local_files():
     PROGRESS_FILE.write_text(json.dumps(EMPTY_PROGRESS, ensure_ascii=False, indent=2), encoding="utf-8")
     WRONG_FILE.write_text("{}", encoding="utf-8")
 
+pytest.importorskip("streamlit.testing.v1")
 from streamlit.testing.v1 import AppTest
 
 APP = str(Path(__file__).resolve().parents[1] / "app.py")
@@ -53,9 +54,12 @@ def _choose_first_single(at: AppTest) -> AppTest:
 
 
 def _choose_first_multiple(at: AppTest) -> AppTest:
-    assert at.multiselect, "找不到多选答题控件"
-    at.multiselect[0].set_value([at.multiselect[0].options[0]])
-    return at
+    # 多选题现在使用逐项 checkbox，不再使用 multiselect 下拉框。
+    for cb in at.checkbox:
+        if cb.label.startswith("A. "):
+            cb.set_value(True)
+            return at
+    raise AssertionError("找不到多选 checkbox 答题控件")
 
 
 def test_random_single_can_submit_and_next() -> None:
@@ -91,19 +95,33 @@ def test_sequential_can_submit_and_next() -> None:
     assert "当前进度：2 /" in "\n".join(x.value for x in at.caption)
 
 
-def test_exam_has_two_sections_and_can_submit() -> None:
+def test_exam_is_single_question_page_with_nav_and_guarded_submit() -> None:
     at = _set_page(_run(), "模拟考试")
-    all_markdown = "\n".join(x.value for x in at.markdown)
-    assert "第一部分 单项选择题" in all_markdown
-    assert "第二部分 多项选择题" in all_markdown
+    all_text = "\n".join([*(x.value for x in at.markdown), *(x.value for x in at.caption)])
+    assert "第一部分 单项选择题" in all_text
+    assert "第二部分 多项选择题" in all_text
+    assert "题号导航" in all_text
     assert len(at.session_state["exam_order"]) == 100
     first_70 = at.session_state["exam_order"][:70]
     last_30 = at.session_state["exam_order"][70:]
     assert all(k.startswith("single:") for k in first_70)
     assert all(k.startswith("multiple:") for k in last_30)
+
+    # 跳到最后一题但不填完所有题，应该禁止交卷。
+    at.session_state["exam_current_index"] = 99
+    at = at.run()
     at = _click(at, "提交试卷")
     assert not at.exception
-    assert any(m.label == "本次模拟考试成绩" for m in at.metric)
+    assert any("不能提交试卷" in x.value for x in at.warning)
+
+    # 填充所有答案后，可以交卷并显示结果。
+    qmap = at.session_state["qmap"]
+    at.session_state["exam_answers"] = {key: qmap[key]["answer"] for key in at.session_state["exam_order"]}
+    at.session_state["exam_current_index"] = 99
+    at = at.run()
+    at = _click(at, "提交试卷")
+    assert not at.exception
+    assert any(m.label == "总分" for m in at.metric)
 
 
 def test_wrong_book_page_loads() -> None:
@@ -139,3 +157,39 @@ def test_exam_progress_is_saved_to_local_file() -> None:
     assert len(progress["exam"]["order"]) == 100
     assert all(k.startswith("single:") for k in progress["exam"]["order"][:70])
     assert all(k.startswith("multiple:") for k in progress["exam"]["order"][70:])
+
+
+def _sample_wrong_book() -> dict:
+    questions = json.loads((ROOT / "data" / "questions.json").read_text(encoding="utf-8"))
+    q1 = next(q for q in questions if q["type"] == "single" and q["id"] == 1)
+    q2 = next(q for q in questions if q["type"] == "single" and q["id"] == 2)
+    return {
+        "single:1": {
+            **q1,
+            "wrong_count": 1,
+            "wrong_choices": ["A"],
+            "last_wrong_at": "2026-01-01 00:00:00",
+        },
+        "single:2": {
+            **q2,
+            "wrong_count": 2,
+            "wrong_choices": ["A"],
+            "last_wrong_at": "2026-01-01 00:00:00",
+        },
+    }
+
+
+def test_wrong_book_practice_hides_answer_before_submit_and_can_next() -> None:
+    WRONG_FILE.write_text(json.dumps(_sample_wrong_book(), ensure_ascii=False, indent=2), encoding="utf-8")
+    at = _set_page(_run(), "错题本")
+    assert not at.exception
+    all_markdown_before = "\n".join(x.value for x in at.markdown)
+    assert "正确答案" not in all_markdown_before
+    at = _choose_first_single(at)
+    at = _click(at, "提交答案")
+    assert not at.exception
+    all_markdown_after = "\n".join(x.value for x in at.markdown)
+    assert "正确答案" in all_markdown_after
+    at = _click(at, "下一题")
+    assert not at.exception
+    assert "当前进度：2 /" in "\n".join(x.value for x in at.caption)
